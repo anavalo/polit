@@ -59,7 +59,6 @@ async function main() {
         }
 
         const data = `${title}\t${author}\t${recommendationsNum}\t${bookUrl}\n`;
-        console.log(data);
         fn(data);
         await page.waitForTimeout(randomInteger(600, 2000));
       } catch (e) {
