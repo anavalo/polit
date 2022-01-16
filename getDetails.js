@@ -11,22 +11,21 @@ const fn = async (data) => {
 };
 
 async function main() {
-  const browser = await puppeteer.launch({
-    headless: true,
-  });
-
-  const page = await browser.newPage();
+  
   const fileStream = fs.createReadStream(FILE_TO_PARSE);
 
   const rl = readline.createInterface({
     input: fileStream,
     crlfDelay: Infinity,
   });
-
+  
   for await (const line of rl) {
-    await page.goto(line).catch((e) => console.log(e, "PAGE PROBLEM"));
 
+    const browser = await puppeteer.launch();
+    const page = await browser.newPage();
+    await page.goto(line).catch((e) => console.log(e, `PAGE PROBLEM at ${line}`));
     const content = await page.content();
+
     const $ = cheerio.load(content);
 
     const bookUrl = line;
@@ -44,9 +43,10 @@ async function main() {
 
     const data = `${title}\t${author}\t${recommendationsNum}\t${bookUrl}\n`;
     fn(data);
-    await page.waitForTimeout(1200);
+
+    await browser.close();
+
   }
-  browser.close();
 }
 
 main();
