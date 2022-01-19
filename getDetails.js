@@ -5,14 +5,7 @@ const util = require("util");
 const dns = require("dns");
 const appendFile = util.promisify(fs.appendFile);
 const readline = require("readline");
-const FILE_TO_PARSE = "foo.txt";
-const isConnected = async () =>
-  !!(await dns.promises.resolve("google.com").catch(() => {}));
-function sleep(ms) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
+const FILE_TO_PARSE = "foo2.txt";
 
 const fn = async (data) => {
   await appendFile("final.csv", data);
@@ -34,37 +27,36 @@ async function main() {
     input: fileStream,
     crlfDelay: Infinity,
   });
+  let counter = 0;
+  for await (const line of rl) {
+    try {
+      await page
+        .goto(line)
+        .catch((e) => console.error(e, `PAGE PROBLEM at ${line}, ${counter}`));
 
-  while (isConnected) {
-    for await (const line of rl) {
-      try {
-        await page
-          .goto(line)
-          .catch((e) => console.log(e, `PAGE PROBLEM at ${line}`));
+      const content = await page.content();
+      const $ = cheerio.load(content);
 
-        const content = await page.content();
-        const $ = cheerio.load(content);
+      const bookUrl = line;
+      const title = $(".details-right-column > h1").text();
+      const author = $(".details-right-column > b > a").text();
+      let recommendationsNum;
+      const recommendations = $(".product-reviews-inner").first();
 
-        const bookUrl = line;
-        const title = $(".details-right-column > h1").text();
-        const author = $(".details-right-column > b > a").text();
-        let recommendationsNum;
-        const recommendations = $(".product-reviews-inner").first();
-
-        if ($("h4", recommendations).text().startsWith("To βιβλίο")) {
-          recommendationsNum =
-            $(".product-reviews-inner").first().children().length - 1;
-        } else {
-          recommendationsNum = 0;
-        }
-
-        const data = `${title}\t${author}\t${recommendationsNum}\t${bookUrl}\n`;
-        fn(data);
-        await page.waitForTimeout(randomInteger(600, 2000));
-      } catch (e) {
-        console.log("SLEEPING 5s");
-        await sleep(5000);
+      if ($("h4", recommendations).text().startsWith("To βιβλίο")) {
+        recommendationsNum =
+          $(".product-reviews-inner").first().children().length - 1;
+      } else {
+        recommendationsNum = 0;
       }
+
+      const data = `${title}\t${author}\t${recommendationsNum}\t${bookUrl}\n`;
+      fn(data);
+      counter += 1;
+      await page.waitForTimeout(randomInteger(1700, 2100));
+    } catch (e) {
+      console.error(e, "BYEEEEEE", counter);
+      break;
     }
   }
 
