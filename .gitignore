@@ -1,4 +1,4 @@
 node_modules
 final.csv
 foo.txt
-DS_store
+.DS_store
