@@ -2,13 +2,12 @@ const puppeteer = require("puppeteer");
 const cheerio = require("cheerio");
 const fs = require("fs");
 const util = require("util");
-const dns = require("dns");
 const appendFile = util.promisify(fs.appendFile);
 const readline = require("readline");
-const FILE_TO_PARSE = "foo2.txt";
+const FILE_TO_PARSE = "foo.txt";
 
 const fn = async (data) => {
-  await appendFile("final.csv", data);
+  await appendFile("psixologia-psixiatriki-psichanalisi.csv", data);
 };
 
 function randomInteger(min, max) {
@@ -32,8 +31,12 @@ async function main() {
     try {
       await page
         .goto(line)
-        .catch((e) => console.error(e, `PAGE PROBLEM at ${line}, ${counter}`));
-
+        .catch(() => {
+          console.error(`PAGE PROBLEM at ${line}, ${counter}`)
+          break;
+          await browser.close();
+      })
+      await page.waitForTimeout(randomInteger(2000, 3000));
       const content = await page.content();
       const $ = cheerio.load(content);
 
@@ -53,9 +56,8 @@ async function main() {
       const data = `${title}\t${author}\t${recommendationsNum}\t${bookUrl}\n`;
       fn(data);
       counter += 1;
-      await page.waitForTimeout(randomInteger(1700, 2100));
     } catch (e) {
-      console.error(e, "BYEEEEEE", counter);
+      console.error("BYEEEEEE", counter);
       break;
     }
   }
