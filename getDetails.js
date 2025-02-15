@@ -4,10 +4,10 @@ const fs = require("fs");
 const util = require("util");
 const appendFile = util.promisify(fs.appendFile);
 const readline = require("readline");
-const FILE_TO_PARSE = "foo.txt";
+const FILE_TO_PARSE = "links.txt";
 
 const fn = async (data) => {
-  await appendFile("psixologia-psixiatriki-psichanalisi.csv", data);
+  await appendFile("computerScience.csv", data);
 };
 
 function randomInteger(min, max) {
@@ -29,14 +29,11 @@ async function main() {
   let counter = 0;
   for await (const line of rl) {
     try {
-      await page
-        .goto(line)
-        .catch(() => {
-          console.error(`PAGE PROBLEM at ${line}, ${counter}`)
-          break;
-          await browser.close();
-      })
-      await page.waitForTimeout(randomInteger(2000, 3000));
+      await page.goto(line).catch(() => {
+        console.error(`PAGE PROBLEM at ${line}, ${counter}`);
+        browser.close();
+      });
+      await page.waitForTimeout(randomInteger(800, 1200));
       const content = await page.content();
       const $ = cheerio.load(content);
 

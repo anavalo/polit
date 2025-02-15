@@ -5,11 +5,10 @@ util = require("util");
 appendFile = util.promisify(fs.appendFile);
 
 const BASE = "https://www.politeianet.gr";
-const URL =
-  "https://www.politeianet.gr/books/index.php?option=com_virtuemart&Itemid=467";
+const URL = "https://www.politeianet.gr/index.php?option=com_virtuemart&Itemid=492";
 
 const fn = async (link) => {
-  await appendFile("foo.txt", `${link}\n`);
+  await appendFile("links.txt", `${link}\n`);
 };
 
 async function main() {
@@ -26,7 +25,6 @@ async function main() {
       await page.goto(url).catch((e) => console.error(e));
       await page.waitForTimeout(3000);
       const content = await page.content();
-
 
       const $ = cheerio.load(content);
 
