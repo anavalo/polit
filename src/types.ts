@@ -102,7 +102,6 @@ export interface ScraperConfig {
     recommendations: string;
   };
   files: {
-    links: string;
     output: string;
   };
 }

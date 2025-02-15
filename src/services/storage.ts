@@ -36,21 +36,6 @@ export class StorageService {
   }
 
   /**
-   * Saves book links to file
-   */
-  async saveLinks(filePath: string, links: string[]): Promise<void> {
-    await ensureDirectoryExists(filePath);
-    
-    try {
-      await fs.appendFile(filePath, links.join('\n') + '\n', 'utf-8');
-      this.logger.debug('Saved links', { count: links.length });
-    } catch (error) {
-      this.logger.error('Failed to save links', error as Error, { filePath });
-      throw error;
-    }
-  }
-
-  /**
    * Escapes a field for CSV format
    */
   private escapeCsvField(field: string): string {

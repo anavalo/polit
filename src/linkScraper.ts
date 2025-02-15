@@ -4,7 +4,6 @@ import { retry } from './utils.js';
 import { NetworkError, ParseError, Logger, RetryConfig, ScrapingErrorRecord } from './types.js';
 import { ConsoleLogger } from './logger.js';
 import { BrowserService } from './services/browser.js';
-import { StorageService } from './services/storage.js';
 import { LinkQueue } from './services/linkQueue.js';
 import { Page } from 'puppeteer';
 
@@ -13,7 +12,6 @@ import { Page } from 'puppeteer';
  */
 export const scrapeBookLinks = async (
   browserService: BrowserService,
-  storageService: StorageService,
   logger: Logger,
   linkQueue: LinkQueue
 ): Promise<void> => {
@@ -58,9 +56,8 @@ export const scrapeBookLinks = async (
         break;
       }
 
-      // Add links to queue and save to file for persistence
+      // Add links to queue
       linkQueue.addLinks(links);
-      await storageService.saveLinks(config.files.links, links);
 
       totalLinks += links.length;
       logger.info(`Found ${links.length} links on page ${pageNum}. Total: ${totalLinks}`);
@@ -132,10 +129,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const config = getConfig();
   const logger = new ConsoleLogger();
   const browserService = new BrowserService(config, logger);
-  const storageService = new StorageService(logger);
   const linkQueue = new LinkQueue(logger);
 
-  scrapeBookLinks(browserService, storageService, logger, linkQueue).catch(error => {
+  scrapeBookLinks(browserService, logger, linkQueue).catch(error => {
     logger.error('Scraping failed:', error as Error);
   });
 }

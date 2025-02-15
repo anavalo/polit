@@ -18,6 +18,7 @@ const envSchema = z.object({
   MAX_CONCURRENT: z.string().regex(/^\d+$/).transform(Number).default('3'),
   RATE_LIMIT: z.string().regex(/^\d+$/).transform(Number).default('30'),
   DEBUG: z.enum(['true', 'false']).default('false'),
+  OUTPUT_FILE: z.string().default('data/religion.csv'),
 });
 
 /**
@@ -33,6 +34,7 @@ const env = envSchema.parse({
   MAX_CONCURRENT: process.env.MAX_CONCURRENT,
   RATE_LIMIT: process.env.RATE_LIMIT,
   DEBUG: process.env.DEBUG,
+  OUTPUT_FILE: process.env.OUTPUT_FILE,
 });
 
 /**
@@ -59,8 +61,7 @@ export const config: ScraperConfig = {
     recommendations: '.product-reviews-inner',
   },
   files: {
-    links: 'data/links.txt',
-    output: 'data/religion.csv',
+    output: env.OUTPUT_FILE,
   },
 } as const;
 
@@ -90,7 +91,6 @@ const configSchema = z.object({
     recommendations: z.string(),
   }),
   files: z.object({
-    links: z.string(),
     output: z.string(),
   }),
 });
