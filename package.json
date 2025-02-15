@@ -2,8 +2,13 @@
   "name": "polit",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "dist/index.js",
   "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "scrape:links": "ts-node src/linkScraper.ts",
+    "scrape:details": "ts-node src/detailsScraper.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -12,5 +17,12 @@
   "dependencies": {
     "cheerio": "^1.0.0-rc.10",
     "puppeteer": "^13.0.1"
+  },
+  "devDependencies": {
+    "@types/cheerio": "^0.22.35",
+    "@types/node": "^22.13.4",
+    "@types/puppeteer": "^7.0.4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
   }
 }
