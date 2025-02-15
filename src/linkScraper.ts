@@ -8,7 +8,10 @@ import { LinkQueue } from './services/linkQueue.js';
 import { Page } from 'puppeteer';
 
 /**
- * Scrapes book links from the website and saves them to a file
+ * Scrapes book links from the website and adds them to the link queue
+ * @param browserService - Service for browser operations
+ * @param logger - Logger for operation tracking
+ * @param linkQueue - Queue for managing scraped links
  */
 export const scrapeBookLinks = async (
   browserService: BrowserService,

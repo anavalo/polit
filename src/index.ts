@@ -24,7 +24,7 @@ const main = async (): Promise<void> => {
 
     // Run both scrapers in parallel
     await Promise.all([
-      scrapeBookLinks(linkBrowserService, storageService, logger, linkQueue),
+      scrapeBookLinks(linkBrowserService, logger, linkQueue),
       scrapeBookDetails(detailsBrowserService, storageService, logger, linkQueue)
     ]);
     
