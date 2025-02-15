@@ -15,7 +15,7 @@ const envSchema = z.object({
   MIN_DELAY: z.string().regex(/^\d+$/).transform(Number).default('800'),
   MAX_DELAY: z.string().regex(/^\d+$/).transform(Number).default('1200'),
   TIMEOUT: z.string().regex(/^\d+$/).transform(Number).default('30000'),
-  MAX_CONCURRENT: z.string().regex(/^\d+$/).transform(Number).default('3'),
+  MAX_CONCURRENT: z.string().regex(/^\d+$/).transform(Number).default('10'),
   RATE_LIMIT: z.string().regex(/^\d+$/).transform(Number).default('30'),
   DEBUG: z.enum(['true', 'false']).default('false'),
   OUTPUT_FILE: z.string().default('data/religion.csv'),
