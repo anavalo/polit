@@ -1,165 +1,160 @@
-import puppeteer from 'puppeteer';
 import cheerio from 'cheerio';
-import { createReadStream } from 'fs';
-import { promises as fs } from 'fs';
-import { createInterface } from 'readline';
-import { config } from './config';
-import { retry, delay, randomInteger, createProgressLogger, ensureDirectoryExists } from './utils';
-import { BookDetails, ScrapingError, ScrapingProgress } from './types';
-
-const log = createProgressLogger();
+import { getConfig } from './config.js';
+import { retry } from './utils.js';
+import { BookDetails, NetworkError, ParseError, RetryConfig, ScrapingErrorRecord, Logger, ScraperConfig } from './types.js';
+import { LinkQueue } from './services/linkQueue.js';
+import { FileLogger } from './logger.js';
+import { BrowserService } from './services/browser.js';
+import { StorageService } from './services/storage.js';
+import { Page } from 'puppeteer';
 
 /**
  * Extracts book details from a page
  */
-async function extractBookDetails(
-  $: cheerio.Root,
-  url: string
-): Promise<BookDetails> {
-  const title = $(config.selectors.bookTitle).text().trim();
-  const author = $(config.selectors.bookAuthor).text().trim();
-  
-  let recommendationsCount = 0;
-  const recommendations = $(config.selectors.recommendations).first();
-  if ($('h4', recommendations).text().trim().startsWith('To βιβλίο')) {
-    recommendationsCount = recommendations.children().length - 1;
-  }
-
-  if (!title || !author) {
-    throw new Error('Failed to extract required book details');
-  }
-
-  return {
-    title,
-    author,
-    recommendationsCount,
-    url
-  };
-}
-
-/**
- * Loads the progress state from a file if it exists
- */
-async function loadProgress(): Promise<ScrapingProgress> {
+const extractBookDetails = async (
+  content: string,
+  url: string,
+  selectors: ScraperConfig['selectors']
+): Promise<BookDetails> => {
   try {
-    const data = await fs.readFile('scraping-progress.json', 'utf-8');
-    return JSON.parse(data);
-  } catch {
+    const $ = cheerio.load(content);
+    const title = $(selectors.bookTitle).text().trim();
+    const author = $(selectors.bookAuthor).text().trim();
+    
+    let recommendationsCount = 0;
+    const recommendations = $(selectors.recommendations).first();
+    if ($('h4', recommendations).text().trim().startsWith('To βιβλίο')) {
+      recommendationsCount = recommendations.children().length - 1;
+    }
+
+    if (!title || !author) {
+      throw new ParseError(url, undefined, { title, author });
+    }
+
     return {
-      processedLinks: 0,
-      totalLinks: 0,
-      failedLinks: []
+      title,
+      author,
+      recommendationsCount,
+      url,
+      scrapedAt: new Date()
     };
+  } catch (error) {
+    if (error instanceof ParseError) {
+      throw error;
+    }
+    throw new ParseError(url, error as Error);
   }
-}
+};
 
 /**
- * Saves the current progress state to a file
+ * Processes a batch of links concurrently
  */
-async function saveProgress(progress: ScrapingProgress): Promise<void> {
-  await fs.writeFile(
-    'scraping-progress.json',
-    JSON.stringify(progress, null, 2)
-  );
-}
+const processBatch = async (
+  links: string[],
+  browserService: BrowserService,
+  storageService: StorageService,
+  logger: Logger
+): Promise<void> => {
+  const config = getConfig();
+  const operations = links.map(url => async (): Promise<BookDetails | null> => {
+    try {
+      const pageContent = await browserService.executeOperation(async (page: Page) => {
+        const retryConfig: RetryConfig = {
+          maxAttempts: 3,
+          delayMs: 1000,
+          backoffFactor: 2,
+          timeout: config.scraping.timeout
+        };
+
+        return await retry(
+          async () => {
+            await page.goto(url);
+            return await page.content();
+          },
+          retryConfig,
+          url
+        );
+      }, url);
+
+      const details = await extractBookDetails(pageContent, url, config.selectors);
+      return details;
+    } catch (error) {
+      const errorRecord: ScrapingErrorRecord = {
+        url,
+        error: error instanceof Error ? error.message : String(error),
+        timestamp: new Date(),
+        attemptCount: 1
+      };
+      await storageService.logError(config.files.errorLog, errorRecord);
+      logger.error(`Failed to process ${url}`, error as Error);
+      return null;
+    }
+  });
+
+  const results = await Promise.all(operations.map(op => op()));
+  const validResults = results.filter((result): result is BookDetails => result !== null);
+  
+  if (validResults.length > 0) {
+    await storageService.saveBookDetailsBatch(config.files.output, validResults);
+  }
+};
 
 /**
  * Scrapes details for all books from the collected links
  */
-export async function scrapeBookDetails(): Promise<void> {
-  const browser = await puppeteer.launch({
-    headless: config.scraping.headless
-  });
-
+export const scrapeBookDetails = async (
+  browserService: BrowserService,
+  storageService: StorageService,
+  logger: Logger,
+  linkQueue: LinkQueue
+): Promise<void> => {
+  const config = getConfig();
+  const batchSize = config.scraping.maxConcurrent;
+  
   try {
-    await ensureDirectoryExists(config.files.output);
-    const progress = await loadProgress();
-    const page = await browser.newPage();
-    page.setDefaultNavigationTimeout(0);
+    await browserService.initialize();
+    let processedLinks = 0;
+    const startTime = new Date();
 
-    // Count total links if not already counted
-    if (!progress.totalLinks) {
-      const fileContent = await fs.readFile(config.files.links, 'utf-8');
-      progress.totalLinks = fileContent.split('\n').filter(line => line.trim()).length;
-    }
-
-    const fileStream = createReadStream(config.files.links);
-    const rl = createInterface({
-      input: fileStream,
-      crlfDelay: Infinity
-    });
-
-    let currentLine = 0;
-    for await (const line of rl) {
-      currentLine++;
+    // Process links as they become available
+    while (linkQueue.hasMore()) {
+      const batch = linkQueue.getBatch(batchSize);
       
-      // Skip already processed links
-      if (currentLine <= progress.processedLinks) {
-        continue;
-      }
-
-      const url = line.trim();
-      if (!url) continue;
-
-      try {
-        log(`Processing book ${currentLine}/${progress.totalLinks} (${Math.round(currentLine/progress.totalLinks*100)}%)`);
+      if (batch.length > 0) {
+        logger.info(`Processing batch of ${batch.length} links...`);
+        await processBatch(batch, browserService, storageService, logger);
+        processedLinks += batch.length;
         
-        await retry(
-          async () => {
-            await page.goto(url);
-            await delay(config.scraping.timeout);
-          },
-          {
-            maxAttempts: 3,
-            delayMs: 1000,
-            backoffFactor: 2
-          },
-          url
-        );
-
-        const content = await page.content();
-        const $ = cheerio.load(content);
-        const details = await extractBookDetails($, url);
-
-        // Append to CSV
-        const csvLine = `${details.title}\t${details.author}\t${details.recommendationsCount}\t${details.url}\n`;
-        await fs.appendFile(config.files.output, csvLine);
-
-        // Update and save progress
-        progress.processedLinks = currentLine;
-        progress.lastProcessedUrl = url;
-        await saveProgress(progress);
-
-        // Random delay between requests
-        await delay(randomInteger(config.scraping.minDelay, config.scraping.maxDelay));
-      } catch (error) {
-        console.error(`Failed to process ${url}:`, error);
-        progress.failedLinks.push(url);
-        await saveProgress(progress);
+        logger.info(`Processed ${processedLinks} links so far`);
+      } else {
+        // Wait for more links if queue is empty but collection isn't complete
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
 
-    log('Scraping completed successfully');
-    if (progress.failedLinks.length > 0) {
-      log(`Failed to process ${progress.failedLinks.length} links. Check scraping-progress.json for details.`);
-    }
+    const duration = (new Date().getTime() - startTime.getTime()) / 1000;
+    logger.info(`Details scraping completed successfully`, {
+      totalProcessed: processedLinks,
+      duration: `${duration}s`
+    });
   } catch (error) {
-    if (error instanceof ScrapingError) {
-      throw error;
-    }
-    throw new ScrapingError(
-      'Failed to scrape book details',
-      'details scraping',
-      error instanceof Error ? error : new Error(String(error))
-    );
+    logger.error('Failed to scrape book details', error as Error);
+    throw error;
   } finally {
-    await browser.close();
+    await browserService.close();
   }
-}
+};
 
-if (require.main === module) {
-  scrapeBookDetails().catch(error => {
-    console.error('Scraping failed:', error);
+// Run if called directly
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const config = getConfig();
+  const logger = new FileLogger(config.files.errorLog);
+  const browserService = new BrowserService(config, logger);
+  const storageService = new StorageService(logger);
+  const linkQueue = new LinkQueue(logger);
+
+  scrapeBookDetails(browserService, storageService, logger, linkQueue).catch(error => {
+    logger.error('Scraping failed:', error as Error);
     process.exit(1);
   });
 }

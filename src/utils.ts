@@ -1,4 +1,4 @@
-import { RetryConfig, ScrapingError } from './types';
+import { RetryConfig, ScrapingError } from './types.js';
 
 /**
  * Generates a random integer between min and max (inclusive)
