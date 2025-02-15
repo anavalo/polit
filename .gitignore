@@ -1,4 +1,10 @@
 node_modules
-final.csv
-foo.txt
 .DS_store
+dist
+
+# Data files
+*.csv
+*.txt
+
+# Log files
+*.log

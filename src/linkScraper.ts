@@ -2,7 +2,7 @@ import cheerio from 'cheerio';
 import { getConfig } from './config.js';
 import { retry } from './utils.js';
 import { NetworkError, ParseError, Logger, RetryConfig, ScrapingErrorRecord } from './types.js';
-import { FileLogger } from './logger.js';
+import { ConsoleLogger } from './logger.js';
 import { BrowserService } from './services/browser.js';
 import { StorageService } from './services/storage.js';
 import { LinkQueue } from './services/linkQueue.js';
@@ -130,7 +130,7 @@ const extractNextPageUrl = async (
 // Run if called directly
 if (import.meta.url === `file://${process.argv[1]}`) {
   const config = getConfig();
-  const logger = new FileLogger(config.files.errorLog);
+  const logger = new ConsoleLogger();
   const browserService = new BrowserService(config, logger);
   const storageService = new StorageService(logger);
   const linkQueue = new LinkQueue(logger);

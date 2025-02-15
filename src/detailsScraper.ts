@@ -3,7 +3,7 @@ import { getConfig } from './config.js';
 import { retry } from './utils.js';
 import { BookDetails, NetworkError, ParseError, RetryConfig, ScrapingErrorRecord, Logger, ScraperConfig } from './types.js';
 import { LinkQueue } from './services/linkQueue.js';
-import { FileLogger } from './logger.js';
+import { ConsoleLogger } from './logger.js';
 import { BrowserService } from './services/browser.js';
 import { StorageService } from './services/storage.js';
 import { Page } from 'puppeteer';
@@ -79,13 +79,6 @@ const processBatch = async (
       const details = await extractBookDetails(pageContent, url, config.selectors);
       return details;
     } catch (error) {
-      const errorRecord: ScrapingErrorRecord = {
-        url,
-        error: error instanceof Error ? error.message : String(error),
-        timestamp: new Date(),
-        attemptCount: 1
-      };
-      await storageService.logError(config.files.errorLog, errorRecord);
       logger.error(`Failed to process ${url}`, error as Error);
       return null;
     }
@@ -148,7 +141,7 @@ export const scrapeBookDetails = async (
 // Run if called directly
 if (import.meta.url === `file://${process.argv[1]}`) {
   const config = getConfig();
-  const logger = new FileLogger(config.files.errorLog);
+  const logger = new ConsoleLogger();
   const browserService = new BrowserService(config, logger);
   const storageService = new StorageService(logger);
   const linkQueue = new LinkQueue(logger);

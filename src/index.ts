@@ -3,7 +3,7 @@ import { scrapeBookLinks } from './linkScraper.js';
 import { scrapeBookDetails } from './detailsScraper.js';
 import { BrowserService } from './services/browser.js';
 import { StorageService } from './services/storage.js';
-import { FileLogger } from './logger.js';
+import { ConsoleLogger } from './logger.js';
 import { LinkQueue } from './services/linkQueue.js';
 
 /**
@@ -11,7 +11,7 @@ import { LinkQueue } from './services/linkQueue.js';
  */
 const main = async (): Promise<void> => {
   const config = getConfig();
-  const logger = new FileLogger(config.files.errorLog);
+  const logger = new ConsoleLogger();
   const linkQueue = new LinkQueue(logger);
 
   try {

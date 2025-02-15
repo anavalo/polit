@@ -61,7 +61,6 @@ export const config: ScraperConfig = {
   files: {
     links: 'data/links.txt',
     output: 'data/religion.csv',
-    errorLog: 'logs/error.log',
   },
 } as const;
 
@@ -93,7 +92,6 @@ const configSchema = z.object({
   files: z.object({
     links: z.string(),
     output: z.string(),
-    errorLog: z.string(),
   }),
 });
 

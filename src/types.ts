@@ -104,7 +104,6 @@ export interface ScraperConfig {
   files: {
     links: string;
     output: string;
-    errorLog: string;  // Add error log file
   };
 }
 

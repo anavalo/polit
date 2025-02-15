@@ -1,13 +1,6 @@
 import { RetryConfig, ScrapingError } from './types.js';
 
 /**
- * Generates a random integer between min and max (inclusive)
- */
-export function randomInteger(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-/**
  * Delays execution for a specified number of milliseconds
  */
 export function delay(ms: number): Promise<void> {
@@ -50,22 +43,6 @@ export async function retry<T>(
 
   // This should never be reached due to the throw above, but TypeScript needs it
   throw new Error('Unexpected retry failure');
-}
-
-/**
- * Creates a progress logger that outputs at most once per second
- */
-export function createProgressLogger() {
-  let lastLog = 0;
-  const minInterval = 1000; // 1 second
-
-  return function log(message: string) {
-    const now = Date.now();
-    if (now - lastLog >= minInterval) {
-      console.log(`[${new Date().toISOString()}] ${message}`);
-      lastLog = now;
-    }
-  };
 }
 
 /**
