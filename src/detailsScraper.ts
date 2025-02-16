@@ -11,39 +11,43 @@ import { Page } from 'puppeteer';
 /**
  * Extracts book details from a page
  */
+/**
+ * Extracts book details with optimized selector handling and parallel evaluation
+ */
 const extractBookDetails = async (
   page: Page,
   url: string,
   selectors: ScraperConfig['selectors']
 ): Promise<BookDetails | null> => {
   try {
-    // Use page.evaluate to extract data directly in the browser context
-    const details = await page.evaluate((selectors) => {
-      const title = document.querySelector(selectors.bookTitle)?.textContent?.trim() || '';
-      const author = document.querySelector(selectors.bookAuthor)?.textContent?.trim() || '';
-      
-      let recommendationsCount = 0;
-      const recommendations = document.querySelector(selectors.recommendations);
-      const header = recommendations?.querySelector('h4')?.textContent?.trim() || '';
-      
-      if (header.startsWith('To βιβλίο')) {
-        recommendationsCount = recommendations?.children.length - 1 || 0;
-      }
+    // Evaluate all selectors in parallel for better performance
+    const [title, author, recommendationsData] = await Promise.all([
+      page.$eval(selectors.bookTitle, el => el.textContent?.trim() || ''),
+      page.$eval(selectors.bookAuthor, el => el.textContent?.trim() || ''),
+      page.$eval(selectors.recommendations, el => ({
+        header: el.querySelector('h4')?.textContent?.trim() || '',
+        count: el.children.length - 1
+      }))
+    ]);
 
-      return { title, author, recommendationsCount };
-    }, selectors);
+    // Quick validation before full processing
+    if (!title || !author) {
+      throw new ParseError(url, undefined, { title, author });
+    }
+
+    const recommendationsCount = recommendationsData.header.startsWith('To βιβλίο') 
+      ? recommendationsData.count 
+      : 0;
 
     // Skip processing if recommendations are zero
-    if (details.recommendationsCount === 0) {
+    if (recommendationsCount === 0) {
       return null;
     }
 
-    if (!details.title || !details.author) {
-      throw new ParseError(url, undefined, details);
-    }
-
     return {
-      ...details,
+      title,
+      author,
+      recommendationsCount,
       url,
       scrapedAt: new Date()
     };
@@ -60,6 +64,9 @@ import pLimit from 'p-limit';
 /**
  * Processes a single link with error handling and retries
  */
+/**
+ * Processes a single link with optimized waiting and error handling
+ */
 const processLink = async (
   url: string,
   browserService: BrowserService,
@@ -67,21 +74,23 @@ const processLink = async (
 ): Promise<BookDetails | null> => {
   const retryConfig: RetryConfig = {
     maxAttempts: 3,
-    delayMs: 1000, // Reduced from 2000ms
-    backoffFactor: 2, // Reduced from 3
+    delayMs: 500, // Further reduced delay
+    backoffFactor: 1.5, // Reduced backoff
     timeout: config.scraping.timeout
   };
 
   return await retry(
     async () => {
       return await browserService.executeOperation(async (page: Page) => {
-        // Wait for critical elements instead of fixed delay
-        await Promise.race([
-          page.waitForSelector(config.selectors.bookTitle),
-          page.waitForSelector(config.selectors.bookAuthor),
-          page.waitForSelector(config.selectors.recommendations),
-          new Promise(resolve => setTimeout(resolve, 5000)) // 5s max wait
-        ]);
+        // Wait for all critical elements in parallel with reduced timeout
+        await Promise.all([
+          page.waitForSelector(config.selectors.bookTitle, { timeout: 3000 }),
+          page.waitForSelector(config.selectors.bookAuthor, { timeout: 3000 }),
+          page.waitForSelector(config.selectors.recommendations, { timeout: 3000 })
+        ]).catch(() => {
+          // If selectors don't appear, page might still be usable
+          // Let extractBookDetails handle any missing elements
+        });
         
         return await extractBookDetails(page, url, config.selectors);
       }, url);
@@ -94,6 +103,9 @@ const processLink = async (
 /**
  * Processes links concurrently with adaptive batching and error recovery
  */
+/**
+ * Processes a batch of links with adaptive concurrency and optimized error handling
+ */
 const processBatch = async (
   links: string[],
   browserService: BrowserService,
@@ -104,43 +116,31 @@ const processBatch = async (
   const config = getConfig();
   const startTime = Date.now();
   
-  // Reduce batch size if there were recent failures
+  // Dynamic batch sizing based on system performance
   const stats = linkQueue.getStats();
-  const effectiveBatchSize = stats.failed > 0 
-    ? Math.max(1, Math.floor(config.scraping.maxConcurrent / 2))
-    : config.scraping.maxConcurrent;
+  const baseSize = config.scraping.maxConcurrent;
+  const successRate = stats.processed > 0 ? (stats.processed - stats.failed) / stats.processed : 1;
   
-  // Create a concurrency limiter with reduced limit if there were failures
+  // Adjust batch size based on success rate and processing time
+  const effectiveBatchSize = Math.max(
+    1,
+    Math.floor(baseSize * (
+      successRate > 0.9 ? 1.2 : // Increase if very successful
+      successRate > 0.7 ? 1 : // Keep same if moderately successful
+      0.8 // Reduce if struggling
+    ))
+  );
+  
   const limit = pLimit(effectiveBatchSize);
   
   try {
-    // Process links with adaptive delays
+    // Process links with minimal delays
     const operations = links.map((url) => limit(async () => {
       try {
-        // Calculate dynamic delay based on active operations and recent performance
-        const activeOps = limit.activeCount;
-        const queueStats = linkQueue.getStats();
-        const avgTime = queueStats.avgProcessingTime;
-        
-        // Add small delay if system is under load
-        if (activeOps > effectiveBatchSize / 2) {
-          const dynamicDelay = Math.min(
-            avgTime * 0.1, // 10% of avg processing time
-            500 // max 500ms
-          );
-          await new Promise(resolve => setTimeout(resolve, dynamicDelay));
-        }
-        
         const details = await processLink(url, browserService, config);
-        // Skip if null (zero recommendations)
-        if (!details) {
-          return { success: true, skipped: true };
-        }
-        return { success: true, details };
+        return details ? { success: true, details } : { success: true, skipped: true };
       } catch (error) {
         logger.error(`Failed to process ${url}`, error as Error);
-        // Brief delay on failure to allow system recovery
-        await new Promise(resolve => setTimeout(resolve, 500));
         return { success: false, url };
       }
     }));

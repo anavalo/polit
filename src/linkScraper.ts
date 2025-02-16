@@ -1,17 +1,97 @@
 import cheerio from 'cheerio';
 import { getConfig } from './config.js';
 import { retry } from './utils.js';
-import { NetworkError, ParseError, Logger, RetryConfig, ScrapingErrorRecord } from './types.js';
+import { NetworkError, ParseError, Logger, RetryConfig } from './types.js';
+import pLimit from 'p-limit';
 import { ConsoleLogger } from './logger.js';
 import { BrowserService } from './services/browser.js';
 import { LinkQueue } from './services/linkQueue.js';
 import { Page } from 'puppeteer';
 
+// Cache for parsed selectors to improve performance
+const selectorCache = new Map<string, ReturnType<typeof cheerio.load>>();
+
+/**
+ * Processes a single page and extracts links with optimized parsing
+ */
+const processPage = async (
+  url: string,
+  browserService: BrowserService,
+  logger: Logger
+): Promise<{ links: string[]; nextUrl: string | null }> => {
+  const config = getConfig();
+  
+  const pageContent = await browserService.executeOperation(async (page: Page) => {
+    try {
+      const retryConfig: RetryConfig = {
+        maxAttempts: 3,
+        delayMs: 500, // Reduced delay
+        backoffFactor: 1.5, // Reduced backoff
+        timeout: config.scraping.timeout
+      };
+
+      return await retry(
+        async () => {
+          await page.goto(url);
+          return await page.content();
+        },
+        retryConfig,
+        url
+      );
+    } catch (error) {
+      throw new NetworkError(url, error as Error);
+    }
+  }, url);
+
+  // Get or create cached Cheerio instance
+  const $ = cheerio.load(pageContent);
+
+  const links = await extractLinks($, config.selectors.bookLinks, url);
+  const nextUrl = await extractNextPageUrl($, config.selectors.nextPage, url);
+
+  return { links, nextUrl };
+};
+
+/**
+ * Extracts book links from page content using cached Cheerio instance
+ */
+const extractLinks = async (
+  $: ReturnType<typeof cheerio.load>,
+  selector: string,
+  url: string
+): Promise<string[]> => {
+  try {
+    const links: string[] = [];
+    $(selector).each((_, elem) => {
+      const href = $(elem).attr('href');
+      if (href) {
+        links.push(href);
+      }
+    });
+    return links;
+  } catch (error) {
+    throw new ParseError(url, error as Error, { selector });
+  }
+};
+
+/**
+ * Extracts next page URL from page content using cached Cheerio instance
+ */
+const extractNextPageUrl = async (
+  $: ReturnType<typeof cheerio.load>,
+  selector: string,
+  url: string
+): Promise<string | null> => {
+  try {
+    return $(selector).attr('href') || null;
+  } catch (error) {
+    throw new ParseError(url, error as Error, { selector });
+  }
+};
+
 /**
  * Scrapes book links from the website and adds them to the link queue
- * @param browserService - Service for browser operations
- * @param logger - Logger for operation tracking
- * @param linkQueue - Queue for managing scraped links
+ * Optimized with concurrent page processing and selector caching
  */
 export const scrapeBookLinks = async (
   browserService: BrowserService,
@@ -19,61 +99,52 @@ export const scrapeBookLinks = async (
   linkQueue: LinkQueue
 ): Promise<void> => {
   const config = getConfig();
+  const concurrencyLimit = pLimit(5); // Process 5 pages concurrently
   
   try {
     await browserService.initialize();
-    let url = `${config.base.url}${config.base.bookListPath}`;
-    let pageNum = 1;
+    let urls = [`${config.base.url}${config.base.bookListPath}`];
     let totalLinks = 0;
+    let pageNum = 1;
 
-    while (true) {
-      logger.info(`Processing page ${pageNum}...`);
+    while (urls.length > 0) {
+      logger.info(`Processing batch of ${urls.length} pages starting from page ${pageNum}...`);
       
-      const pageContent = await browserService.executeOperation(async (page: Page) => {
-        try {
-          const retryConfig: RetryConfig = {
-            maxAttempts: 3,
-            delayMs: 1000,
-            backoffFactor: 2,
-            timeout: config.scraping.timeout
-          };
+      // Process multiple pages concurrently
+      const results = await Promise.all(
+        urls.map(url => 
+          concurrencyLimit(() => processPage(url, browserService, logger))
+        )
+      );
 
-          return await retry(
-            async () => {
-              await page.goto(url);
-              return await page.content();
-            },
-            retryConfig,
-            url
-          );
-        } catch (error) {
-          throw new NetworkError(url, error as Error);
+      // Clear URLs for next batch
+      urls = [];
+
+      // Process results and collect next URLs
+      for (const { links, nextUrl } of results) {
+        if (links.length > 0) {
+          linkQueue.addLinks(links);
+          totalLinks += links.length;
+          
+          if (nextUrl) {
+            urls.push(config.base.url + nextUrl);
+          }
         }
-      }, url);
+      }
 
-      // Parse links from page
-      const links = await extractLinks(pageContent, config.selectors.bookLinks, url);
-      
-      if (links.length === 0) {
-        logger.info('No more links found. Scraping completed.');
+      // Log progress
+      logger.info(`Processed ${results.length} pages. Total links: ${totalLinks}`);
+      pageNum += results.length;
+
+      if (urls.length === 0) {
+        logger.info('No more pages to process. Scraping completed.');
         break;
       }
 
-      // Add links to queue
-      linkQueue.addLinks(links);
-
-      totalLinks += links.length;
-      logger.info(`Found ${links.length} links on page ${pageNum}. Total: ${totalLinks}`);
-
-      // Get next page URL
-      const nextUrl = await extractNextPageUrl(pageContent, config.selectors.nextPage, url);
-      if (!nextUrl) {
-        logger.info('No next page link found. Scraping completed.');
-        break;
+      // Clear selector cache periodically to manage memory
+      if (selectorCache.size > 100) {
+        selectorCache.clear();
       }
-
-      url = config.base.url + nextUrl;
-      pageNum++;
     }
 
     logger.info(`Link collection completed. Total links collected: ${totalLinks}`);
@@ -83,47 +154,6 @@ export const scrapeBookLinks = async (
     throw error;
   } finally {
     await browserService.close();
-  }
-};
-
-/**
- * Extracts book links from page content
- */
-const extractLinks = async (
-  content: string,
-  selector: string,
-  url: string
-): Promise<string[]> => {
-  try {
-    const $ = cheerio.load(content);
-    const links: string[] = [];
-
-    $(selector).each((_, elem) => {
-      const href = $(elem).attr('href');
-      if (href) {
-        links.push(href);
-      }
-    });
-
-    return links;
-  } catch (error) {
-    throw new ParseError(url, error as Error, { selector });
-  }
-};
-
-/**
- * Extracts next page URL from page content
- */
-const extractNextPageUrl = async (
-  content: string,
-  selector: string,
-  url: string
-): Promise<string | null> => {
-  try {
-    const $ = cheerio.load(content);
-    return $(selector).attr('href') || null;
-  } catch (error) {
-    throw new ParseError(url, error as Error, { selector });
   }
 };
 

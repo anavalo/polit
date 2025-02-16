@@ -11,7 +11,7 @@ export class BrowserService {
   private limiter: RateLimiter;
   private concurrencyLimit: (fn: () => Promise<any>) => Promise<any>;
   private pagePool: Page[] = [];
-  private readonly PAGE_POOL_SIZE = 10; // Maximum number of pages to keep in pool
+  private readonly PAGE_POOL_SIZE = 20; // Increased pool size for better concurrency
 
   constructor(
     private config: ScraperConfig,
@@ -32,6 +32,7 @@ export class BrowserService {
    */
   async initialize(): Promise<void> {
     if (!this.browser) {
+      // Pre-warm the browser with initial pages
       this.browser = await puppeteer.launch({
         headless: this.config.scraping.headless,
         args: [
@@ -60,8 +61,18 @@ export class BrowserService {
           '--no-zygote',
         ]
       });
-      this.logger.info('Browser initialized with optimized settings', {
-        headless: this.config.scraping.headless
+
+      // Pre-warm the page pool
+      await Promise.all(
+        Array(this.PAGE_POOL_SIZE).fill(null).map(async () => {
+          const page = await this.getPage();
+          this.pagePool.push(page);
+        })
+      );
+
+      this.logger.info('Browser initialized with optimized settings and pre-warmed pool', {
+        headless: this.config.scraping.headless,
+        poolSize: this.PAGE_POOL_SIZE
       });
     }
   }
@@ -129,18 +140,8 @@ export class BrowserService {
     if (!page.isClosed()) {
       if (this.pagePool.length < this.PAGE_POOL_SIZE) {
         try {
-          // Clear page state before returning to pool
-          await Promise.all([
-            page.evaluate(() => window.stop()), // Stop any ongoing requests
-            page.evaluate(() => localStorage.clear()),
-            page.evaluate(() => sessionStorage.clear()),
-            page.evaluate(() => document.documentElement.innerHTML = ''), // Clear DOM
-            page.evaluate(() => {
-              // Clear all event listeners
-              const clone = document.documentElement.cloneNode(true);
-              document.documentElement.replaceWith(clone);
-            })
-          ]);
+          // Simplified cleanup - just clear navigation
+          await page.evaluate(() => window.stop());
           this.pagePool.push(page);
         } catch (error) {
           await page.close();
