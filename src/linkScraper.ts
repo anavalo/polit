@@ -54,6 +54,7 @@ const processPage = async (
 
 /**
  * Extracts book links from page content using cached Cheerio instance
+ * Processes links concurrently in batches for better performance
  */
 const extractLinks = async (
   $: ReturnType<typeof cheerio.load>,
@@ -61,14 +62,19 @@ const extractLinks = async (
   url: string
 ): Promise<string[]> => {
   try {
-    const links: string[] = [];
-    $(selector).each((_, elem) => {
-      const href = $(elem).attr('href');
-      if (href) {
-        links.push(href);
-      }
-    });
-    return links;
+    const elements = $(selector).toArray();
+    const concurrencyLimit = pLimit(5); // Process 5 links concurrently
+    
+    const links = await Promise.all(
+      elements.map(elem => 
+        concurrencyLimit(() => {
+          const href = $(elem).attr('href');
+          return href || null;
+        })
+      )
+    );
+
+    return links.filter((link): link is string => link !== null);
   } catch (error) {
     throw new ParseError(url, error as Error, { selector });
   }
@@ -99,7 +105,7 @@ export const scrapeBookLinks = async (
   linkQueue: LinkQueue
 ): Promise<void> => {
   const config = getConfig();
-  const concurrencyLimit = pLimit(5); // Process 5 pages concurrently
+  const concurrencyLimit = pLimit(5); // Process 5 book links concurrently
   
   try {
     await browserService.initialize();
@@ -117,20 +123,22 @@ export const scrapeBookLinks = async (
         )
       );
 
-      // Clear URLs for next batch
-      urls = [];
-
-      // Process results and collect next URLs
+      // Collect next URLs and process results
+      const nextUrls: string[] = [];
       for (const { links, nextUrl } of results) {
         if (links.length > 0) {
           linkQueue.addLinks(links);
           totalLinks += links.length;
           
           if (nextUrl) {
-            urls.push(config.base.url + nextUrl);
+            nextUrls.push(config.base.url + nextUrl);
           }
         }
       }
+
+      // Update URLs array with next batch
+      // If we have more than 5 URLs, only take the first 5 to match our concurrency limit
+      urls = nextUrls.slice(0, 5);
 
       // Log progress
       logger.info(`Processed ${results.length} pages. Total links: ${totalLinks}`);
