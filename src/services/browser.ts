@@ -1,6 +1,5 @@
 import puppeteer, { Browser, Page } from 'puppeteer';
 import { ScraperConfig, Logger } from '../types.js';
-import { delay } from '../utils.js';
 import pLimit from 'p-limit';
 import { RateLimiter } from 'limiter';
 
@@ -63,23 +62,12 @@ export class BrowserService {
   }
 
   /**
-   * Navigates to a URL with rate limiting and random delays
+   * Navigates to a URL with rate limiting
    */
   private async navigateToUrl(page: Page, url: string): Promise<void> {
     // Wait for rate limit token
     await this.limiter.removeTokens(1);
-
     await page.goto(url);
-    await delay(this.randomDelay());
-  }
-
-  /**
-   * Generates a random delay within configured bounds
-   */
-  private randomDelay(): number {
-    return Math.floor(
-      Math.random() * (this.config.scraping.maxDelay - this.config.scraping.minDelay + 1)
-    ) + this.config.scraping.minDelay;
   }
 
   /**
@@ -101,17 +89,6 @@ export class BrowserService {
         await page.close();
       }
     });
-  }
-
-  /**
-   * Executes multiple page operations concurrently
-   */
-  async executeOperations<T>(
-    operations: Array<(page: Page) => Promise<T>>
-  ): Promise<T[]> {
-    return Promise.all(
-      operations.map(operation => this.executeOperation(operation))
-    );
   }
 
   /**

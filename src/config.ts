@@ -15,10 +15,10 @@ const envSchema = z.object({
   MIN_DELAY: z.string().regex(/^\d+$/).transform(Number).default('800'),
   MAX_DELAY: z.string().regex(/^\d+$/).transform(Number).default('1200'),
   TIMEOUT: z.string().regex(/^\d+$/).transform(Number).default('30000'),
-  MAX_CONCURRENT: z.string().regex(/^\d+$/).transform(Number).default('10'),
-  RATE_LIMIT: z.string().regex(/^\d+$/).transform(Number).default('30'),
+  MAX_CONCURRENT: z.string().regex(/^\d+$/).transform(Number).default('5'),
+  RATE_LIMIT: z.string().regex(/^\d+$/).transform(Number).default('45'),
   DEBUG: z.enum(['true', 'false']).default('false'),
-  OUTPUT_FILE: z.string().default('data/religion.csv'),
+  OUTPUT_FILE: z.string().default('data/sociology.csv'),
 });
 
 /**
@@ -26,7 +26,7 @@ const envSchema = z.object({
  */
 const env = envSchema.parse({
   BASE_URL: process.env.BASE_URL || 'https://www.politeianet.gr',
-  BOOK_LIST_PATH: process.env.BOOK_LIST_PATH || '/index.php?orderby=bestsellers&Itemid=585&option=com_virtuemart&page=shop.browse&category_id=470&manufacturer_id=0&keyword=&keyword1=&keyword2=&kidage=0&limitstart=0',
+  BOOK_LIST_PATH: process.env.BOOK_LIST_PATH || '/index.php?page=shop.browse&option=com_virtuemart&Itemid=501&limitstart=0&advanced=0&keyword1=&keyword1method=0&keyword2=&keyword2method=0&writerid=-1&epimid=-1&metfid=-1&illustratorid=-1&publisherid=-1&isbn=&pcode=&category_id=424&edKMAdvCategory=0&edKMAdvSubCategory=0&rangeFilter=0&keyword=&seira=&langFilter=-1&pubdateFilter=-1&kidage=0&availabilityFilter=1&discountFilter=-1&priceFilter=-1&pageFilter=-1&writerid=-1&publisherid=-1&seira=',
   HEADLESS: process.env.HEADLESS,
   MIN_DELAY: process.env.MIN_DELAY,
   MAX_DELAY: process.env.MAX_DELAY,

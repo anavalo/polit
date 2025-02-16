@@ -46,54 +46,107 @@ const extractBookDetails = async (
   }
 };
 
+import pLimit from 'p-limit';
+
 /**
- * Processes a batch of links concurrently
+ * Processes a single link with error handling and retries
+ */
+const processLink = async (
+  url: string,
+  browserService: BrowserService,
+  config: ScraperConfig
+): Promise<BookDetails> => {
+  const pageContent = await browserService.executeOperation(async (page: Page) => {
+    const retryConfig: RetryConfig = {
+      maxAttempts: 3,
+      delayMs: 1000,
+      backoffFactor: 2,
+      timeout: config.scraping.timeout
+    };
+
+    return await retry(
+      async () => {
+        await page.goto(url);
+        return await page.content();
+      },
+      retryConfig,
+      url
+    );
+  }, url);
+
+  return await extractBookDetails(pageContent, url, config.selectors);
+};
+
+/**
+ * Processes links concurrently with adaptive batching and error recovery
  */
 const processBatch = async (
   links: string[],
   browserService: BrowserService,
   storageService: StorageService,
-  logger: Logger
+  logger: Logger,
+  linkQueue: LinkQueue
 ): Promise<void> => {
   const config = getConfig();
-  const operations = links.map(url => async (): Promise<BookDetails | null> => {
-    try {
-      const pageContent = await browserService.executeOperation(async (page: Page) => {
-        const retryConfig: RetryConfig = {
-          maxAttempts: 3,
-          delayMs: 1000,
-          backoffFactor: 2,
-          timeout: config.scraping.timeout
-        };
-
-        return await retry(
-          async () => {
-            await page.goto(url);
-            return await page.content();
-          },
-          retryConfig,
-          url
-        );
-      }, url);
-
-      const details = await extractBookDetails(pageContent, url, config.selectors);
-      return details;
-    } catch (error) {
-      logger.error(`Failed to process ${url}`, error as Error);
-      return null;
-    }
-  });
-
-  const results = await Promise.all(operations.map(op => op()));
-  const validResults = results.filter((result): result is BookDetails => result !== null);
+  const startTime = Date.now();
   
-  if (validResults.length > 0) {
-    await storageService.saveBookDetailsBatch(config.files.output, validResults);
+  // Create a concurrency limiter
+  const limit = pLimit(config.scraping.maxConcurrent);
+  
+  try {
+    // Process links concurrently with error handling for each
+    const operations = links.map(url => limit(async () => {
+      try {
+        const details = await processLink(url, browserService, config);
+        return { success: true, details };
+      } catch (error) {
+        logger.error(`Failed to process ${url}`, error as Error);
+        return { success: false, url };
+      }
+    }));
+
+    const results = await Promise.all(operations);
+    
+    // Separate successful and failed results
+    const successfulResults = results
+      .filter((r): r is { success: true; details: BookDetails } => r.success)
+      .map(r => r.details);
+    
+    const failedUrls = results
+      .filter((r): r is { success: false; url: string } => !r.success)
+      .map(r => r.url);
+
+    // Save successful results
+    if (successfulResults.length > 0) {
+      await storageService.saveBookDetailsBatch(config.files.output, successfulResults);
+    }
+
+    // Update queue statistics
+    const processingTime = Date.now() - startTime;
+    linkQueue.markProcessed(
+      links,
+      failedUrls.length === 0,
+      processingTime
+    );
+
+    // Log batch results
+    const stats = linkQueue.getStats();
+    logger.info('Batch processing completed', {
+      successful: successfulResults.length,
+      failed: failedUrls.length,
+      queueSize: stats.queueSize,
+      avgProcessingTime: Math.round(stats.avgProcessingTime),
+      totalProcessed: stats.processed
+    });
+  } catch (error) {
+    // Mark entire batch as failed if we hit an unexpected error
+    linkQueue.markProcessed(links, false, Date.now() - startTime);
+    throw error;
   }
 };
 
 /**
- * Scrapes details for all books from the collected links
+ * Scrapes details for all books from the collected links with improved concurrency
  */
 export const scrapeBookDetails = async (
   browserService: BrowserService,
@@ -102,33 +155,32 @@ export const scrapeBookDetails = async (
   linkQueue: LinkQueue
 ): Promise<void> => {
   const config = getConfig();
-  const batchSize = config.scraping.maxConcurrent;
+  const startTime = new Date();
   
   try {
     await browserService.initialize();
-    let processedLinks = 0;
-    const startTime = new Date();
 
-    // Process links as they become available
+    // Process links with adaptive batching
     while (linkQueue.hasMore()) {
-      const batch = linkQueue.getBatch(batchSize);
+      const batch = linkQueue.getBatch(config.scraping.maxConcurrent);
       
       if (batch.length > 0) {
-        logger.info(`Processing batch of ${batch.length} links...`);
-        await processBatch(batch, browserService, storageService, logger);
-        processedLinks += batch.length;
-        
-        logger.info(`Processed ${processedLinks} links so far`);
+        await processBatch(batch, browserService, storageService, logger, linkQueue);
+      } else if (!linkQueue.hasMore()) {
+        break;
       } else {
-        // Wait for more links if queue is empty but collection isn't complete
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Exponential backoff when waiting for new links
+        await new Promise(resolve => setTimeout(resolve, Math.min(1000, linkQueue.getStats().avgProcessingTime / 2)));
       }
     }
 
     const duration = (new Date().getTime() - startTime.getTime()) / 1000;
-    logger.info(`Details scraping completed successfully`, {
-      totalProcessed: processedLinks,
-      duration: `${duration}s`
+    const stats = linkQueue.getStats();
+    logger.info('Details scraping completed', {
+      processed: stats.processed,
+      failed: stats.failed,
+      duration: `${duration}s`,
+      avgProcessingTime: `${Math.round(stats.avgProcessingTime)}ms`
     });
   } catch (error) {
     logger.error('Failed to scrape book details', error as Error);
