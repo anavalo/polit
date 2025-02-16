@@ -10,6 +10,7 @@ A high-performance, TypeScript application for scraping `politeia.net` books dat
   - Smart queue management with deduplication
   - Concurrent processing with configurable limits
 
+
 - **Robust Error Handling**
   - Automatic retries with exponential backoff
   - Custom error types for different failure scenarios
@@ -59,7 +60,11 @@ Scrapes all book links from the listing pages
 
 ### 2. Scrape Book Details
 
-Processes the collected links to gather detailed book information
+Processes the collected links to gather detailed book information. Features automatic batch retry with exponential backoff if a batch fails:
+- First retry: 5 second delay
+- Second retry: 10 second delay
+- Third retry: 20 second delay
+- After 3 failed attempts, marks batch as failed and continues with next batch
 
 ## Project Structure
 

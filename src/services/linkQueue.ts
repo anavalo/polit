@@ -21,6 +21,7 @@ export class LinkQueue extends EventEmitter {
     failed: 0,
     avgProcessingTime: 0,
   };
+  private readonly EMA_ALPHA = 0.1; // Smoothing factor for EMA
   private lastEmitTime = 0;
   private readonly EMIT_THROTTLE = 100; // ms
 
@@ -67,10 +68,12 @@ export class LinkQueue extends EventEmitter {
     
     if (success) {
       this.stats.processed += links.length;
-      // Update moving average of processing time
+      // Update exponential moving average of processing time
       this.stats.avgProcessingTime = 
-        (this.stats.avgProcessingTime * this.stats.processed + processingTime) / 
-        (this.stats.processed + 1);
+        this.stats.avgProcessingTime === 0
+          ? processingTime
+          : (1 - this.EMA_ALPHA) * this.stats.avgProcessingTime + 
+            this.EMA_ALPHA * processingTime;
     } else {
       this.stats.failed += links.length;
     }

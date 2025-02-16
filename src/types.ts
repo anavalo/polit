@@ -88,11 +88,11 @@ export interface ScraperConfig {
   };
   scraping: {
     headless: boolean;
-    minDelay: number;
-    maxDelay: number;
     timeout: number;
     maxConcurrent: number;  // Add concurrency control
     rateLimitPerMinute: number;  // Add rate limiting
+    maxRetries: number;  // Maximum number of retry attempts for failed operations
+    waitUntil?: 'load' | 'domcontentloaded' | 'networkidle0' | 'networkidle2';  // Navigation completion criteria
   };
   selectors: {
     bookLinks: string;

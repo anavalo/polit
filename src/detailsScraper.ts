@@ -12,29 +12,38 @@ import { Page } from 'puppeteer';
  * Extracts book details from a page
  */
 const extractBookDetails = async (
-  content: string,
+  page: Page,
   url: string,
   selectors: ScraperConfig['selectors']
-): Promise<BookDetails> => {
+): Promise<BookDetails | null> => {
   try {
-    const $ = cheerio.load(content);
-    const title = $(selectors.bookTitle).text().trim();
-    const author = $(selectors.bookAuthor).text().trim();
-    
-    let recommendationsCount = 0;
-    const recommendations = $(selectors.recommendations).first();
-    if ($('h4', recommendations).text().trim().startsWith('To βιβλίο')) {
-      recommendationsCount = recommendations.children().length - 1;
+    // Use page.evaluate to extract data directly in the browser context
+    const details = await page.evaluate((selectors) => {
+      const title = document.querySelector(selectors.bookTitle)?.textContent?.trim() || '';
+      const author = document.querySelector(selectors.bookAuthor)?.textContent?.trim() || '';
+      
+      let recommendationsCount = 0;
+      const recommendations = document.querySelector(selectors.recommendations);
+      const header = recommendations?.querySelector('h4')?.textContent?.trim() || '';
+      
+      if (header.startsWith('To βιβλίο')) {
+        recommendationsCount = recommendations?.children.length - 1 || 0;
+      }
+
+      return { title, author, recommendationsCount };
+    }, selectors);
+
+    // Skip processing if recommendations are zero
+    if (details.recommendationsCount === 0) {
+      return null;
     }
 
-    if (!title || !author) {
-      throw new ParseError(url, undefined, { title, author });
+    if (!details.title || !details.author) {
+      throw new ParseError(url, undefined, details);
     }
 
     return {
-      title,
-      author,
-      recommendationsCount,
+      ...details,
       url,
       scrapedAt: new Date()
     };
@@ -55,26 +64,31 @@ const processLink = async (
   url: string,
   browserService: BrowserService,
   config: ScraperConfig
-): Promise<BookDetails> => {
-  const pageContent = await browserService.executeOperation(async (page: Page) => {
-    const retryConfig: RetryConfig = {
-      maxAttempts: 3,
-      delayMs: 1000,
-      backoffFactor: 2,
-      timeout: config.scraping.timeout
-    };
+): Promise<BookDetails | null> => {
+  const retryConfig: RetryConfig = {
+    maxAttempts: 3,
+    delayMs: 1000, // Reduced from 2000ms
+    backoffFactor: 2, // Reduced from 3
+    timeout: config.scraping.timeout
+  };
 
-    return await retry(
-      async () => {
-        await page.goto(url);
-        return await page.content();
-      },
-      retryConfig,
-      url
-    );
-  }, url);
-
-  return await extractBookDetails(pageContent, url, config.selectors);
+  return await retry(
+    async () => {
+      return await browserService.executeOperation(async (page: Page) => {
+        // Wait for critical elements instead of fixed delay
+        await Promise.race([
+          page.waitForSelector(config.selectors.bookTitle),
+          page.waitForSelector(config.selectors.bookAuthor),
+          page.waitForSelector(config.selectors.recommendations),
+          new Promise(resolve => setTimeout(resolve, 5000)) // 5s max wait
+        ]);
+        
+        return await extractBookDetails(page, url, config.selectors);
+      }, url);
+    },
+    retryConfig,
+    url
+  );
 };
 
 /**
@@ -90,31 +104,60 @@ const processBatch = async (
   const config = getConfig();
   const startTime = Date.now();
   
-  // Create a concurrency limiter
-  const limit = pLimit(config.scraping.maxConcurrent);
+  // Reduce batch size if there were recent failures
+  const stats = linkQueue.getStats();
+  const effectiveBatchSize = stats.failed > 0 
+    ? Math.max(1, Math.floor(config.scraping.maxConcurrent / 2))
+    : config.scraping.maxConcurrent;
+  
+  // Create a concurrency limiter with reduced limit if there were failures
+  const limit = pLimit(effectiveBatchSize);
   
   try {
-    // Process links concurrently with error handling for each
-    const operations = links.map(url => limit(async () => {
+    // Process links with adaptive delays
+    const operations = links.map((url) => limit(async () => {
       try {
+        // Calculate dynamic delay based on active operations and recent performance
+        const activeOps = limit.activeCount;
+        const queueStats = linkQueue.getStats();
+        const avgTime = queueStats.avgProcessingTime;
+        
+        // Add small delay if system is under load
+        if (activeOps > effectiveBatchSize / 2) {
+          const dynamicDelay = Math.min(
+            avgTime * 0.1, // 10% of avg processing time
+            500 // max 500ms
+          );
+          await new Promise(resolve => setTimeout(resolve, dynamicDelay));
+        }
+        
         const details = await processLink(url, browserService, config);
+        // Skip if null (zero recommendations)
+        if (!details) {
+          return { success: true, skipped: true };
+        }
         return { success: true, details };
       } catch (error) {
         logger.error(`Failed to process ${url}`, error as Error);
+        // Brief delay on failure to allow system recovery
+        await new Promise(resolve => setTimeout(resolve, 500));
         return { success: false, url };
       }
     }));
 
+    // Process all operations in parallel with rate limiting
     const results = await Promise.all(operations);
     
     // Separate successful and failed results
     const successfulResults = results
-      .filter((r): r is { success: true; details: BookDetails } => r.success)
+      .filter((r): r is { success: true; details: BookDetails } => r.success && !('skipped' in r))
       .map(r => r.details);
     
     const failedUrls = results
       .filter((r): r is { success: false; url: string } => !r.success)
       .map(r => r.url);
+
+    const skippedCount = results.filter(r => r.success && 'skipped' in r).length;
 
     // Save successful results
     if (successfulResults.length > 0) {
@@ -134,6 +177,7 @@ const processBatch = async (
     logger.info('Batch processing completed', {
       successful: successfulResults.length,
       failed: failedUrls.length,
+      skipped: skippedCount,
       queueSize: stats.queueSize,
       avgProcessingTime: Math.round(stats.avgProcessingTime),
       totalProcessed: stats.processed
@@ -169,8 +213,13 @@ export const scrapeBookDetails = async (
       } else if (!linkQueue.hasMore()) {
         break;
       } else {
-        // Exponential backoff when waiting for new links
-        await new Promise(resolve => setTimeout(resolve, Math.min(1000, linkQueue.getStats().avgProcessingTime / 2)));
+        // Dynamic delay when waiting for new links based on current performance
+        const stats = linkQueue.getStats();
+        const waitTime = Math.min(
+          stats.avgProcessingTime * 0.2, // 20% of avg processing time
+          1000 // max 1 second
+        );
+        await new Promise(resolve => setTimeout(resolve, waitTime));
       }
     }
 
