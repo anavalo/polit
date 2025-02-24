@@ -14,10 +14,10 @@ const envSchema = z.object({
   HEADLESS: z.enum(['true', 'false']).default('true'),
   TIMEOUT: z.string().regex(/^\d+$/).transform(Number).default('30000'),
   MAX_CONCURRENT: z.string().regex(/^\d+$/).transform(Number).default('5'),
-  RATE_LIMIT: z.string().regex(/^\d+$/).transform(Number).default('45'),
+  RATE_LIMIT: z.string().regex(/^\d+$/).transform(Number).default('60'),
   MAX_RETRIES: z.string().regex(/^\d+$/).transform(Number).default('3'),
   DEBUG: z.enum(['true', 'false']).default('false'),
-  OUTPUT_FILE: z.string().default('data/literature.csv'),
+  OUTPUT_FILE: z.string().default('data/anthology.csv'),
 });
 
 /**
@@ -25,7 +25,7 @@ const envSchema = z.object({
  */
 const env = envSchema.parse({
   BASE_URL: process.env.BASE_URL || 'https://www.politeianet.gr',
-  BOOK_LIST_PATH: process.env.BOOK_LIST_PATH || '/index.php?option=com_virtuemart&Itemid=510',
+  BOOK_LIST_PATH: process.env.BOOK_LIST_PATH || '/sygrafeas/anthologia-1466',
   HEADLESS: process.env.HEADLESS,
   TIMEOUT: process.env.TIMEOUT,
   MAX_CONCURRENT: process.env.MAX_CONCURRENT,

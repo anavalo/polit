@@ -7,9 +7,9 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "ts-node --esm src/index.ts",
-    "scrape:links": "ts-node --esm src/linkScraper.ts",
-    "scrape:details": "ts-node --esm src/detailsScraper.ts",
+    "dev": "NODE_OPTIONS=\"--loader ts-node/esm\" node src/index.ts",
+    "scrape:links": "NODE_OPTIONS=\"--loader ts-node/esm\" node src/linkScraper.ts",
+    "scrape:details": "NODE_OPTIONS=\"--loader ts-node/esm\" node src/detailsScraper.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
