@@ -1,6 +1,6 @@
 # Book Recommendations Scraper
 
-A high-performance, TypeScript application for scraping `politeia.net` books data with robust error handling, intelligent concurrency, and comprehensive logging.
+A high-performance, TypeScript application for scraping `politeianet.gr` online bookstore. Scrapes data with robust error handling, intelligent concurrency, and comprehensive logging.
 
 ## Features
 
@@ -44,7 +44,7 @@ Create a `.env` file in the project root with your configuration:
 ```env
 BASE_URL=https://www.politeianet.gr/
 OUTPUT_FILE=books.csv
-BOOK_LIST_PATH
+BOOK_LIST_PATH=/index.php?option=com_virtuemart&Itemid=506
 HEADLESS=true
 MAX_CONCURRENT=5
 RATE_LIMIT_PER_MINUTE=30
